@@ -1,49 +1,97 @@
 import matplotlib.pyplot as plt
-
+from math import sqrt
 
 Li = 0
-Lh = 470e-6
+Lh = 47e-6
 Cout = 100e-6
-Vin = 4
+Vin = 2
 Vout = 0
+Iload = 0
 
-Vout_plot = []
-Li_plot = []
+data = []
 
 class Regulator:
     def __init__(self, setpoint):
-        self.period = 10e-6
+        self.period = 12e-6
+        self.ton = 0
+        self.toff = self.period
         self.duty = 0.0
         self.vset = setpoint
+        self.vout = 0
 
-    def update(self, Vout):
-        if Vout < self.vset:
-            self.duty += 0.01
+    def update(self, Vin, Vout, Iload):
+        self.Li = (Vout - self.vout) * Cout / self.toff
+        self.vout = Vout
+        vdif = self.vset - self.vout
+        if vdif > 0:
+            coulombs_needed = vdif * Cout
+            amps_needed = sqrt(coulombs_needed / Lh * (vdif/2+Vin))
+            amps_needed += Iload - self.Li
         else:
-            self.duty -= 0.01
+            amps_needed = Iload - self.Li
+        self.duty = amps_needed / (self.period * Vin / Lh)
         if self.duty>0.8:
-            self.duty = 0.8
-        elif self.duty<0:
-            self.duty = 0
-        return (self.duty    *self.period,
-                (1-self.duty)*self.period)
+            duty = 0.8
+        elif self.duty < 0:
+            duty = 0
+        else:
+            duty = self.duty
+        self.ton = self.period * duty
+        self.toff = self.period * (1-duty)
+        return self.ton, self.toff
+    def setpoint(self, setpoint):
+        self.vset = setpoint
+
+class Charger():
+    def __init__(self):
+        self.speed = 0
+        self.watts = [0, 5, 10, 15]
+        self.amps = 0
+    def reqv(self):
+        if self.speed > 2:
+            return 9
+        else:
+            return 5
+    def update(self, Vout):
+        match self.speed:
+            case 0: # Not charging
+                if Vout > 4.5 and Vout < 5.5:
+                    self.speed = 1
+            case 1: # Slow charging
+                if Vout > 5.5 or Vout < 4.5:
+                    self.speed = 0
+                elif self.amps > 0.4:
+                    self.speed = 2
+            case 2: # Normal charging
+                if Vout > 6 or Vout < 4:
+                    self.speed = 0
+                elif self.amps > 0.8 and Vout >= 5:
+                    self.speed = 3
+            case 3: # Fast charging
+                if Vout > 9 or Vout < 4.8:
+                    self.speed = 1
+        if self.speed > 0:
+            self.amps = self.watts[self.speed] / Vout
+        else:
+            self.amps = .1
+        return self.amps
 
 u1 = Regulator(5.0)
+u2 = Charger()
 
 for j in range(int(5e3)):
-    Ton,Toff = u1.update(Vout)
-    Iload = 0.1
+    Iload = u2.update(Vout)
+    if j%10 == 0:
+        u1.setpoint(u2.reqv())
+    Ton,Toff = u1.update(Vin,Vout,Iload)
     Li += Vin * Ton / Lh
     di = min((Vout - Vin) * Toff / Lh, Li)
     Vout += Toff * (Li - di/2) / Cout
     Vout -= (Ton + Toff) * Iload / Cout
     Li -= di
-    Vout_plot.append(Vout)
-    Li_plot.append(Li)
+    data.append((Vout,Iload,u2.speed))
 
-print(Vout)
-print(Li)
-plt.plot(Vout_plot)
-plt.plot(Li_plot)
+for d in zip(*data):
+    plt.plot(list(d))
 plt.show()
 
