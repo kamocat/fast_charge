@@ -9,9 +9,9 @@ inline void start_adc(short channel){
 }
 
 int read_adc(void){
-	PORTA.OUTSET = 2;
 	while(ADC0.COMMAND); //don't block if ADC is not running
-	PORTA.OUTCLR = 2; return ADC0.RES; }
+	return ADC0.RES; 
+}
 void init(){
 	/* LEDs */
 	PORTA.DIR = 0x0E; // LED outputs for status
@@ -47,42 +47,47 @@ enum Adc
 	adc_reqv = 10,
 };
 
+float parse_reqv(int reqv){
+	if( reqv > 500 )
+		return 5.5;
+	if( reqv > 300 )
+		return 8.0;
+	return 11.0;
+}
+
 const float volts = 4.34 * 5.0 / 1024; //Scale ADC value to volts
 int main(){
 	init();
-	start_adc(adc_vin);
 	uint8_t duty = 0;
 	float setpoint = 5.0;
+	PORTA.OUTSET = 2; // Turn on an LED so we know it's on
 	while(1){
+		start_adc(adc_vin);
 		float vout = read_adc();
 		start_adc(adc_vout);
 		vout *= volts;
 		if (vout < setpoint){
 			++duty;
+			_delay_us(100);
 		} else if(duty > 0){
 			--duty;
 		}
 		float vin = read_adc();
-		start_adc(adc_vin);
+		start_adc(adc_reqv);
 		vin *= volts;
 		uint8_t maxd = (1 - vin / (setpoint+0.7)) * 256;
-		if( duty > 200){
-			duty = 200;
+		if( duty > maxd){
+			duty = maxd;
 		}
 		TCA0.SPLIT.LCMP0 = duty;
-		TCA0.SPLIT.HCMP0 = vout * 20;
-		_delay_us(100);
-		/*
-		for(uint8_t i = 0; i < 255; ++i){
-			TCA0.SPLIT.HCMP0 = i;
-			_delay_ms(4);
+		setpoint = parse_reqv(read_adc());
+		start_adc(adc_iload);
+		if( setpoint > 6 ){
+			PORTA.OUTSET = 4;
+		} else {
+			PORTA.OUTCLR = 4;
 		}
-		PORTA.OUTTGL= 4;
-		for(uint8_t i = 255; i > 1; --i){
-			TCA0.SPLIT.HCMP0 = i;
-			_delay_ms(4);
-		}
-		PORTA.OUTTGL= 4;
-		*/
+		// Dislay brightness on green LED
+		TCA0.SPLIT.HCMP0 = read_adc()/4;
 	}
 }
